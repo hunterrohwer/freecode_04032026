@@ -15,22 +15,25 @@ public class CarController : MonoBehaviour
     [SerializeField] private float accelerationFalloff = 1.35f;
 
     [Header("Steering")]
-    [SerializeField] private float yawTorque = 10f;
-    [SerializeField] private float steerResponse = 2.2f;
+    [SerializeField] private float yawTorque = 14f;
     [SerializeField] private float minSteerSpeed = 1.5f;
     [SerializeField] private float fullSteerSpeed = 12f;
-    [SerializeField] private float highSpeedSteerReduction = 0.45f;
+    [SerializeField] private float highSpeedSteerReduction = 0.25f;
+    [SerializeField] private float throttleSteerReduction = 0.45f;
+    [SerializeField] private float steerYawDamping = 1.4f;
 
     [Header("Grip")]
-    [SerializeField] private float baseSideGrip = 8f;
-    [SerializeField] private float speedGripLoss = 0.35f;
-    [SerializeField] private float slipGripLoss = 0.9f;
-    [SerializeField] private float slipYawAssist = 1.8f;
+    [SerializeField] private float baseSideGrip = 6.5f;
+    [SerializeField] private float speedGripLoss = 0.75f;
+    [SerializeField] private float throttleGripLoss = 0.35f;
+    [SerializeField] private float slipGripLoss = 0.55f;
+    [SerializeField] private float slipYawAssist = 2.4f;
+    [SerializeField] private float slipDeadzone = 0.35f;
 
     [Header("Weight Transfer")]
-    [SerializeField] private float throttleFrontBiteLoss = 0.18f;
-    [SerializeField] private float liftRotationGain = 0.22f;
-    [SerializeField] private float brakeRotationGain = 0.3f;
+    [SerializeField] private float throttleFrontBiteLoss = 0.35f;
+    [SerializeField] private float liftRotationGain = 0.3f;
+    [SerializeField] private float brakeRotationGain = 0.4f;
 
     [Header("Drag")]
     [SerializeField] private float linearDrag = 0.45f;
@@ -114,17 +117,48 @@ public class CarController : MonoBehaviour
     {
         float forwardSpeed = localVelocity.z;
         float absForwardSpeed = Mathf.Abs(forwardSpeed);
-        if (Mathf.Abs(steeringInput) < 0.01f || absForwardSpeed < 0.5f)
+        if (Mathf.Abs(steeringInput) < 0.01f || absForwardSpeed < minSteerSpeed)
         {
             return;
         }
 
-        // Temporary steering-debug pass: use strong direct yaw torque so turning is obvious on flat ground.
         float steerDirection = Mathf.Sign(forwardSpeed);
-        float speedFactor = Mathf.Clamp(absForwardSpeed / minSteerSpeed, 0.75f, 1.5f);
-        float steerTorqueAmount = steeringInput * steerDirection * yawTorque * speedFactor;
+        float speedAuthority = Mathf.InverseLerp(minSteerSpeed, fullSteerSpeed, absForwardSpeed);
+        float highSpeedReduction = Mathf.Lerp(1f, highSpeedSteerReduction, Mathf.Clamp01(absForwardSpeed / maxForwardSpeed));
+
+        // Under throttle the front washes out more; lifting or braking helps the car rotate.
+        float frontBite = 1f;
+        if (throttleInput > 0f)
+        {
+            frontBite -= throttleInput * throttleFrontBiteLoss;
+            frontBite -= throttleInput * throttleSteerReduction * Mathf.Clamp01(absForwardSpeed / maxForwardSpeed);
+        }
+        else if (throttleInput < 0f)
+        {
+            frontBite += Mathf.Abs(throttleInput) * brakeRotationGain;
+        }
+        else
+        {
+            frontBite += liftRotationGain;
+        }
+
+        frontBite = Mathf.Max(0.15f, frontBite);
+
+        float steerTorqueAmount =
+            steeringInput *
+            steerDirection *
+            yawTorque *
+            speedAuthority *
+            highSpeedReduction *
+            frontBite;
 
         rb.AddTorque(Vector3.up * steerTorqueAmount, ForceMode.Acceleration);
+
+        // Light yaw damping keeps rotation readable without making the car feel locked.
+        Vector3 localAngularVelocity = transform.InverseTransformDirection(rb.angularVelocity);
+        float yawDamping = Mathf.Clamp01(steerYawDamping * Time.fixedDeltaTime);
+        localAngularVelocity.y = Mathf.Lerp(localAngularVelocity.y, localAngularVelocity.y * 0.92f, yawDamping);
+        rb.angularVelocity = transform.TransformDirection(localAngularVelocity);
     }
 
     private void ApplyLateralGrip(Vector3 localVelocity)
@@ -133,18 +167,22 @@ public class CarController : MonoBehaviour
         float slipSpeed = localVelocity.x;
         float slipAmount = Mathf.Abs(slipSpeed);
         float speedPercent = Mathf.Clamp01(forwardSpeed / maxForwardSpeed);
+        float throttleAmount = Mathf.Clamp01(Mathf.Max(0f, throttleInput));
 
-        // Grip fades with speed and slip so the car can move around instead of snapping straight.
+        // Grip falls away hard with speed and throttle so momentum carries the car wider on dirt.
         float grip = baseSideGrip;
         grip *= 1f - (speedPercent * speedGripLoss);
-        grip /= 1f + (slipAmount * slipGripLoss);
-        grip = Mathf.Max(0f, grip);
+        grip *= 1f - (throttleAmount * throttleGripLoss);
+
+        float slipBeyondDeadzone = Mathf.Max(0f, slipAmount - slipDeadzone);
+        grip /= 1f + (slipBeyondDeadzone * slipGripLoss);
+        grip = Mathf.Max(0.15f, grip);
 
         float lateralCorrection = -slipSpeed * grip;
         rb.AddForce(transform.right * lateralCorrection, ForceMode.Acceleration);
 
-        // Slip adds a little self-rotation so fast corner entries feel looser.
-        float yawFromSlip = -slipSpeed * slipYawAssist * speedPercent;
+        // Slip still helps the rear come around so the car stays dangerous instead of pure understeer.
+        float yawFromSlip = -slipSpeed * slipYawAssist * (0.35f + speedPercent);
         rb.AddTorque(Vector3.up * yawFromSlip, ForceMode.Acceleration);
     }
 }
