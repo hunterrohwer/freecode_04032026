@@ -15,20 +15,21 @@ public class CarController : MonoBehaviour
     [SerializeField] private float accelerationFalloff = 1.35f;
 
     [Header("Steering")]
-    [SerializeField] private float yawTorque = 14f;
-    [SerializeField] private float minSteerSpeed = 1.5f;
+    [SerializeField] private float groundedYawTorque = 22f;
+    [SerializeField] private float minSteerSpeed = 0.75f;
     [SerializeField] private float fullSteerSpeed = 12f;
-    [SerializeField] private float highSpeedSteerReduction = 0.25f;
-    [SerializeField] private float throttleSteerReduction = 0.45f;
-    [SerializeField] private float steerYawDamping = 1.4f;
+    [SerializeField] private float highSpeedSteerReduction = 0.4f;
+    [SerializeField] private float throttleSteerReduction = 0.3f;
+    [SerializeField] private float steerYawDamping = 0.85f;
 
-    [Header("Grip")]
-    [SerializeField] private float baseSideGrip = 6.5f;
-    [SerializeField] private float speedGripLoss = 0.75f;
+    [Header("Side Grip")]
+    [SerializeField] private float baseSideGrip = 5.2f;
+    [SerializeField] private float speedGripLoss = 0.65f;
     [SerializeField] private float throttleGripLoss = 0.35f;
-    [SerializeField] private float slipGripLoss = 0.55f;
-    [SerializeField] private float slipYawAssist = 2.4f;
-    [SerializeField] private float slipDeadzone = 0.35f;
+    [SerializeField] private float steerGripReduction = 0.55f;
+    [SerializeField] private float slipGripLoss = 0.35f;
+    [SerializeField] private float slipYawAssist = 2.8f;
+    [SerializeField] private float slipDeadzone = 0.6f;
 
     [Header("Weight Transfer")]
     [SerializeField] private float throttleFrontBiteLoss = 0.35f;
@@ -147,7 +148,7 @@ public class CarController : MonoBehaviour
         float steerTorqueAmount =
             steeringInput *
             steerDirection *
-            yawTorque *
+            groundedYawTorque *
             speedAuthority *
             highSpeedReduction *
             frontBite;
@@ -168,11 +169,13 @@ public class CarController : MonoBehaviour
         float slipAmount = Mathf.Abs(slipSpeed);
         float speedPercent = Mathf.Clamp01(forwardSpeed / maxForwardSpeed);
         float throttleAmount = Mathf.Clamp01(Mathf.Max(0f, throttleInput));
+        float steerAmount = Mathf.Abs(steeringInput);
 
         // Grip falls away hard with speed and throttle so momentum carries the car wider on dirt.
         float grip = baseSideGrip;
         grip *= 1f - (speedPercent * speedGripLoss);
         grip *= 1f - (throttleAmount * throttleGripLoss);
+        grip *= 1f - (steerAmount * steerGripReduction);
 
         float slipBeyondDeadzone = Mathf.Max(0f, slipAmount - slipDeadzone);
         grip /= 1f + (slipBeyondDeadzone * slipGripLoss);
