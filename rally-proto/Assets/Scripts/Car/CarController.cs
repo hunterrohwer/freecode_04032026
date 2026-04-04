@@ -114,50 +114,17 @@ public class CarController : MonoBehaviour
     {
         float forwardSpeed = localVelocity.z;
         float absForwardSpeed = Mathf.Abs(forwardSpeed);
-        if (absForwardSpeed < minSteerSpeed || Mathf.Abs(steeringInput) < 0.01f)
+        if (Mathf.Abs(steeringInput) < 0.01f || absForwardSpeed < 0.5f)
         {
             return;
         }
 
-        // Steering authority ramps in with speed, then softens again at higher speed.
-        float steerAuthority = Mathf.InverseLerp(minSteerSpeed, fullSteerSpeed, absForwardSpeed);
-        float highSpeedSoftening = Mathf.Lerp(1f, highSpeedSteerReduction, Mathf.Clamp01(absForwardSpeed / maxForwardSpeed));
-
-        // Throttle loads the rear and makes the front push a bit; lift/brake helps the car rotate.
-        float frontBite = 1f;
-        if (throttleInput > 0f)
-        {
-            frontBite -= throttleInput * throttleFrontBiteLoss;
-        }
-        else if (throttleInput < 0f)
-        {
-            frontBite += Mathf.Abs(throttleInput) * brakeRotationGain;
-        }
-        else
-        {
-            frontBite += 0.1f;
-        }
-
-        if (Mathf.Abs(throttleInput) < 0.05f && absForwardSpeed > minSteerSpeed)
-        {
-            frontBite += liftRotationGain;
-        }
-
+        // Temporary steering-debug pass: use strong direct yaw torque so turning is obvious on flat ground.
         float steerDirection = Mathf.Sign(forwardSpeed);
-        float steerTorqueAmount =
-            steeringInput *
-            steerDirection *
-            yawTorque *
-            steerAuthority *
-            highSpeedSoftening *
-            Mathf.Max(0f, frontBite);
+        float speedFactor = Mathf.Clamp(absForwardSpeed / minSteerSpeed, 0.75f, 1.5f);
+        float steerTorqueAmount = steeringInput * steerDirection * yawTorque * speedFactor;
 
         rb.AddTorque(Vector3.up * steerTorqueAmount, ForceMode.Acceleration);
-
-        // A touch of yaw damping keeps the rotation readable rather than twitchy.
-        Vector3 localAngularVelocity = transform.InverseTransformDirection(rb.angularVelocity);
-        localAngularVelocity.y = Mathf.Lerp(localAngularVelocity.y, localAngularVelocity.y * 0.94f, steerResponse * Time.fixedDeltaTime);
-        rb.angularVelocity = transform.TransformDirection(localAngularVelocity);
     }
 
     private void ApplyLateralGrip(Vector3 localVelocity)
