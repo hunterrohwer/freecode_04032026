@@ -7,36 +7,36 @@ public class CarController : MonoBehaviour
     [SerializeField] private Rigidbody rb;
 
     [Header("Ground Check")]
-    [SerializeField] private float groundCheckDistance = 0.8f;
+    [SerializeField] private float groundCheckDistance = 0.85f;
     [SerializeField] private LayerMask groundLayers = ~0;
 
     [Header("Speed")]
     [SerializeField] private float acceleration = 30f;
     [SerializeField] private float reverseAcceleration = 16f;
-    [SerializeField] private float brakingForce = 28f;
+    [SerializeField] private float brakingForce = 30f;
     [SerializeField] private float maxForwardSpeed = 24f;
     [SerializeField] private float maxReverseSpeed = 10f;
-    [SerializeField] private float linearDrag = 0.45f;
+    [SerializeField] private float linearDrag = 0.4f;
     [SerializeField] private float coastDrag = 0.8f;
+    [SerializeField] private float angularDrag = 2f;
 
-    [Header("Grounded Steering")]
-    [SerializeField] private float groundedSteerTorque = 28f;
-    [SerializeField] private float airSteerTorque = 6f;
+    [Header("Steering")]
     [SerializeField] private float minSteerSpeed = 0.5f;
+    [SerializeField] private float steerDegreesPerSecond = 140f;
     [SerializeField] private float highSpeedSteerReduction = 0.45f;
-    [SerializeField] private float throttleSteerReduction = 0.35f;
-    [SerializeField] private float angularDrag = 1.4f;
+    [SerializeField] private float throttleSteerReduction = 0.3f;
+    [SerializeField] private float airSteerAssist = 2f;
 
     [Header("Grounded Grip")]
-    [SerializeField] private float baseSideGrip = 4.6f;
+    [SerializeField] private float baseSideGrip = 5f;
     [SerializeField] private float speedGripLoss = 0.55f;
-    [SerializeField] private float throttleGripLoss = 0.3f;
-    [SerializeField] private float steerGripReduction = 0.65f;
+    [SerializeField] private float throttleGripLoss = 0.25f;
+    [SerializeField] private float steerGripReduction = 0.55f;
 
     [Header("Drift")]
-    [SerializeField] private float slipDeadzone = 0.9f;
-    [SerializeField] private float slipCorrection = 0.2f;
-    [SerializeField] private float slipYawAssist = 2.2f;
+    [SerializeField] private float slipDeadzone = 0.75f;
+    [SerializeField] private float slipCorrection = 2.2f;
+    [SerializeField] private float slipYawAssist = 1.6f;
 
     private float throttleInput;
     private float steeringInput;
@@ -128,17 +128,26 @@ public class CarController : MonoBehaviour
         }
 
         float speedPercent = Mathf.Clamp01(absForwardSpeed / maxForwardSpeed);
-        float highSpeedReduction = Mathf.Lerp(1f, highSpeedSteerReduction, speedPercent);
+        float speedReduction = Mathf.Lerp(1f, highSpeedSteerReduction, speedPercent);
         float throttleReduction = 1f - (Mathf.Max(0f, throttleInput) * throttleSteerReduction);
         float steerDirection = Mathf.Sign(forwardSpeed);
 
-        float steerTorque = steeringInput * steerDirection * groundedSteerTorque * highSpeedReduction * throttleReduction;
-        if (!isGrounded)
+        if (isGrounded)
         {
-            steerTorque = steeringInput * steerDirection * airSteerTorque;
-        }
+            float yawStep = steeringInput *
+                steerDirection *
+                steerDegreesPerSecond *
+                speedReduction *
+                throttleReduction *
+                Time.fixedDeltaTime;
 
-        rb.AddTorque(Vector3.up * steerTorque, ForceMode.Acceleration);
+            Quaternion yawRotation = Quaternion.Euler(0f, yawStep, 0f);
+            rb.MoveRotation(rb.rotation * yawRotation);
+        }
+        else
+        {
+            rb.AddTorque(Vector3.up * steeringInput * steerDirection * airSteerAssist, ForceMode.Acceleration);
+        }
     }
 
     private void ApplySideGrip(Vector3 localVelocity)
@@ -163,10 +172,11 @@ public class CarController : MonoBehaviour
             grip = 0.1f;
         }
 
-        float slipBeyondDeadzone = Mathf.Max(0f, slipAmount - slipDeadzone);
-        float correctionStrength = slipBeyondDeadzone * grip * slipCorrection;
+        grip = Mathf.Max(0.1f, grip);
 
-        rb.AddForce(-transform.right * Mathf.Sign(slipSpeed) * correctionStrength, ForceMode.Acceleration);
+        float slipBeyondDeadzone = Mathf.Max(0f, slipAmount - slipDeadzone);
+        float correctionForce = -slipSpeed * slipBeyondDeadzone * grip * slipCorrection;
+        rb.AddForce(transform.right * correctionForce, ForceMode.Acceleration);
 
         if (isGrounded && steerAmount > 0.01f)
         {
