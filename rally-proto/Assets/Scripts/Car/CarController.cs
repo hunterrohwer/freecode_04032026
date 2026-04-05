@@ -6,43 +6,41 @@ public class CarController : MonoBehaviour
     [Header("References")]
     [SerializeField] private Rigidbody rb;
 
+    [Header("Ground Check")]
+    [SerializeField] private float groundCheckDistance = 0.8f;
+    [SerializeField] private LayerMask groundLayers = ~0;
+
     [Header("Speed")]
+    [SerializeField] private float acceleration = 30f;
+    [SerializeField] private float reverseAcceleration = 16f;
+    [SerializeField] private float brakingForce = 28f;
     [SerializeField] private float maxForwardSpeed = 24f;
-    [SerializeField] private float maxReverseSpeed = 9f;
-    [SerializeField] private float acceleration = 28f;
-    [SerializeField] private float reverseAcceleration = 14f;
-    [SerializeField] private float brakingForce = 30f;
-    [SerializeField] private float accelerationFalloff = 1.35f;
-
-    [Header("Steering")]
-    [SerializeField] private float groundedYawTorque = 22f;
-    [SerializeField] private float minSteerSpeed = 0.75f;
-    [SerializeField] private float fullSteerSpeed = 12f;
-    [SerializeField] private float highSpeedSteerReduction = 0.4f;
-    [SerializeField] private float throttleSteerReduction = 0.3f;
-    [SerializeField] private float steerYawDamping = 0.85f;
-
-    [Header("Side Grip")]
-    [SerializeField] private float baseSideGrip = 5.2f;
-    [SerializeField] private float speedGripLoss = 0.65f;
-    [SerializeField] private float throttleGripLoss = 0.35f;
-    [SerializeField] private float steerGripReduction = 0.55f;
-    [SerializeField] private float slipGripLoss = 0.35f;
-    [SerializeField] private float slipYawAssist = 2.8f;
-    [SerializeField] private float slipDeadzone = 0.6f;
-
-    [Header("Weight Transfer")]
-    [SerializeField] private float throttleFrontBiteLoss = 0.35f;
-    [SerializeField] private float liftRotationGain = 0.3f;
-    [SerializeField] private float brakeRotationGain = 0.4f;
-
-    [Header("Drag")]
+    [SerializeField] private float maxReverseSpeed = 10f;
     [SerializeField] private float linearDrag = 0.45f;
-    [SerializeField] private float angularDrag = 2.2f;
-    [SerializeField] private float coastDrag = 0.75f;
+    [SerializeField] private float coastDrag = 0.8f;
+
+    [Header("Grounded Steering")]
+    [SerializeField] private float groundedSteerTorque = 28f;
+    [SerializeField] private float airSteerTorque = 6f;
+    [SerializeField] private float minSteerSpeed = 0.5f;
+    [SerializeField] private float highSpeedSteerReduction = 0.45f;
+    [SerializeField] private float throttleSteerReduction = 0.35f;
+    [SerializeField] private float angularDrag = 1.4f;
+
+    [Header("Grounded Grip")]
+    [SerializeField] private float baseSideGrip = 4.6f;
+    [SerializeField] private float speedGripLoss = 0.55f;
+    [SerializeField] private float throttleGripLoss = 0.3f;
+    [SerializeField] private float steerGripReduction = 0.65f;
+
+    [Header("Drift")]
+    [SerializeField] private float slipDeadzone = 0.9f;
+    [SerializeField] private float slipCorrection = 0.2f;
+    [SerializeField] private float slipYawAssist = 2.2f;
 
     private float throttleInput;
     private float steeringInput;
+    private bool isGrounded;
 
     private void Reset()
     {
@@ -68,12 +66,20 @@ public class CarController : MonoBehaviour
 
     private void FixedUpdate()
     {
+        isGrounded = CheckGrounded();
+
         Vector3 localVelocity = transform.InverseTransformDirection(rb.linearVelocity);
 
         ApplyDrag();
-        ApplyLongitudinalForce(localVelocity);
+        ApplyDrive(localVelocity);
         ApplySteering(localVelocity);
-        ApplyLateralGrip(localVelocity);
+        ApplySideGrip(localVelocity);
+    }
+
+    private bool CheckGrounded()
+    {
+        Vector3 rayOrigin = transform.position + Vector3.up * 0.1f;
+        return Physics.Raycast(rayOrigin, Vector3.down, groundCheckDistance, groundLayers, QueryTriggerInteraction.Ignore);
     }
 
     private void ApplyDrag()
@@ -82,87 +88,60 @@ public class CarController : MonoBehaviour
         rb.angularDamping = angularDrag;
     }
 
-    private void ApplyLongitudinalForce(Vector3 localVelocity)
+    private void ApplyDrive(Vector3 localVelocity)
     {
         float forwardSpeed = localVelocity.z;
-        float inputDirection = Mathf.Sign(throttleInput);
-        bool hasThrottle = Mathf.Abs(throttleInput) > 0.01f;
 
-        if (!hasThrottle)
+        if (Mathf.Abs(throttleInput) < 0.01f)
         {
             return;
         }
 
-        bool isBrakingAgainstMotion = Mathf.Abs(forwardSpeed) > 0.5f && Mathf.Sign(forwardSpeed) != inputDirection;
-        if (isBrakingAgainstMotion)
+        bool brakingAgainstMotion = Mathf.Abs(forwardSpeed) > 0.5f && Mathf.Sign(forwardSpeed) != Mathf.Sign(throttleInput);
+        if (brakingAgainstMotion)
         {
             rb.AddForce(-rb.linearVelocity.normalized * brakingForce * Mathf.Abs(throttleInput), ForceMode.Acceleration);
             return;
         }
 
         float maxSpeed = throttleInput >= 0f ? maxForwardSpeed : maxReverseSpeed;
-        float accelForce = throttleInput >= 0f ? acceleration : reverseAcceleration;
+        float driveAcceleration = throttleInput >= 0f ? acceleration : reverseAcceleration;
         float speedPercent = Mathf.Clamp01(Mathf.Abs(forwardSpeed) / maxSpeed);
-        float availableAcceleration = 1f - Mathf.Pow(speedPercent, accelerationFalloff);
+        float availableDrive = 1f - speedPercent;
 
-        if (availableAcceleration <= 0f)
+        if (availableDrive <= 0f)
         {
             return;
         }
 
-        float driveForce = throttleInput * accelForce * availableAcceleration;
-        rb.AddForce(transform.forward * driveForce, ForceMode.Acceleration);
+        rb.AddForce(transform.forward * (throttleInput * driveAcceleration * availableDrive), ForceMode.Acceleration);
     }
 
     private void ApplySteering(Vector3 localVelocity)
     {
         float forwardSpeed = localVelocity.z;
         float absForwardSpeed = Mathf.Abs(forwardSpeed);
+
         if (Mathf.Abs(steeringInput) < 0.01f || absForwardSpeed < minSteerSpeed)
         {
             return;
         }
 
+        float speedPercent = Mathf.Clamp01(absForwardSpeed / maxForwardSpeed);
+        float highSpeedReduction = Mathf.Lerp(1f, highSpeedSteerReduction, speedPercent);
+        float throttleReduction = 1f - (Mathf.Max(0f, throttleInput) * throttleSteerReduction);
         float steerDirection = Mathf.Sign(forwardSpeed);
-        float speedAuthority = Mathf.InverseLerp(minSteerSpeed, fullSteerSpeed, absForwardSpeed);
-        float highSpeedReduction = Mathf.Lerp(1f, highSpeedSteerReduction, Mathf.Clamp01(absForwardSpeed / maxForwardSpeed));
 
-        // Under throttle the front washes out more; lifting or braking helps the car rotate.
-        float frontBite = 1f;
-        if (throttleInput > 0f)
+        float steerTorque = steeringInput * steerDirection * groundedSteerTorque * highSpeedReduction * throttleReduction;
+        if (!isGrounded)
         {
-            frontBite -= throttleInput * throttleFrontBiteLoss;
-            frontBite -= throttleInput * throttleSteerReduction * Mathf.Clamp01(absForwardSpeed / maxForwardSpeed);
-        }
-        else if (throttleInput < 0f)
-        {
-            frontBite += Mathf.Abs(throttleInput) * brakeRotationGain;
-        }
-        else
-        {
-            frontBite += liftRotationGain;
+            steerTorque = steeringInput * steerDirection * airSteerTorque;
         }
 
-        frontBite = Mathf.Max(0.15f, frontBite);
-
-        float steerTorqueAmount =
-            steeringInput *
-            steerDirection *
-            groundedYawTorque *
-            speedAuthority *
-            highSpeedReduction *
-            frontBite;
-
-        rb.AddTorque(Vector3.up * steerTorqueAmount, ForceMode.Acceleration);
-
-        // Light yaw damping keeps rotation readable without making the car feel locked.
-        Vector3 localAngularVelocity = transform.InverseTransformDirection(rb.angularVelocity);
-        float yawDamping = Mathf.Clamp01(steerYawDamping * Time.fixedDeltaTime);
-        localAngularVelocity.y = Mathf.Lerp(localAngularVelocity.y, localAngularVelocity.y * 0.92f, yawDamping);
-        rb.angularVelocity = transform.TransformDirection(localAngularVelocity);
+        rb.AddTorque(Vector3.up * steerTorque, ForceMode.Acceleration);
     }
 
-    private void ApplyLateralGrip(Vector3 localVelocity)
+    private void ApplySideGrip(Vector3 localVelocity)
     {
         float forwardSpeed = Mathf.Abs(localVelocity.z);
         float slipSpeed = localVelocity.x;
@@ -171,21 +150,28 @@ public class CarController : MonoBehaviour
         float throttleAmount = Mathf.Clamp01(Mathf.Max(0f, throttleInput));
         float steerAmount = Mathf.Abs(steeringInput);
 
-        // Grip falls away hard with speed and throttle so momentum carries the car wider on dirt.
         float grip = baseSideGrip;
-        grip *= 1f - (speedPercent * speedGripLoss);
-        grip *= 1f - (throttleAmount * throttleGripLoss);
-        grip *= 1f - (steerAmount * steerGripReduction);
+
+        if (isGrounded)
+        {
+            grip *= 1f - (speedPercent * speedGripLoss);
+            grip *= 1f - (throttleAmount * throttleGripLoss);
+            grip *= 1f - (steerAmount * steerGripReduction);
+        }
+        else
+        {
+            grip = 0.1f;
+        }
 
         float slipBeyondDeadzone = Mathf.Max(0f, slipAmount - slipDeadzone);
-        grip /= 1f + (slipBeyondDeadzone * slipGripLoss);
-        grip = Mathf.Max(0.15f, grip);
+        float correctionStrength = slipBeyondDeadzone * grip * slipCorrection;
 
-        float lateralCorrection = -slipSpeed * grip;
-        rb.AddForce(transform.right * lateralCorrection, ForceMode.Acceleration);
+        rb.AddForce(-transform.right * Mathf.Sign(slipSpeed) * correctionStrength, ForceMode.Acceleration);
 
-        // Slip still helps the rear come around so the car stays dangerous instead of pure understeer.
-        float yawFromSlip = -slipSpeed * slipYawAssist * (0.35f + speedPercent);
-        rb.AddTorque(Vector3.up * yawFromSlip, ForceMode.Acceleration);
+        if (isGrounded && steerAmount > 0.01f)
+        {
+            float yawFromSlip = -slipSpeed * slipYawAssist * (0.25f + speedPercent);
+            rb.AddTorque(Vector3.up * yawFromSlip, ForceMode.Acceleration);
+        }
     }
 }
